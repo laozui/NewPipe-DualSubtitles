@@ -340,11 +340,29 @@ public final class DualSubtitleSynthesizer {
             @NonNull final String combinedText,
             @NonNull final String targetLang) {
 
+        // 🛡 双端点容灾：dict-chrome-ex 抗限流更稳（gtx 在部分出口 IP 上会 429）
+        for (final String clientName : new String[] {"dict-chrome-ex", "gtx"}) {
+            final List<String> lines = translateBatchWithClient(
+                    client, combinedText, targetLang, clientName);
+            if (!lines.isEmpty()) {
+                return lines;
+            }
+        }
+        return Collections.emptyList();
+    }
+
+    @NonNull
+    private static List<String> translateBatchWithClient(
+            @NonNull final OkHttpClient client,
+            @NonNull final String combinedText,
+            @NonNull final String targetLang,
+            @NonNull final String googleClient) {
+
         final List<String> lines = new ArrayList<>();
         try {
             final String encoded = URLEncoder.encode(combinedText, "UTF-8");
-            final String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl="
-                    + targetLang + "&dt=t&q=" + encoded;
+            final String url = "https://translate.googleapis.com/translate_a/single?client="
+                    + googleClient + "&sl=auto&tl=" + targetLang + "&dt=t&q=" + encoded;
 
             final String respJson = fetchString(client, url);
             if (respJson != null && respJson.startsWith("[")) {
@@ -363,7 +381,7 @@ public final class DualSubtitleSynthesizer {
                 }
             }
         } catch (final Exception e) {
-            Log.w(TAG, "Google Translate batch failed: " + e.getMessage());
+            Log.w(TAG, "Google Translate batch failed (" + googleClient + "): " + e.getMessage());
         }
         return lines;
     }
