@@ -28,6 +28,14 @@ public final class DualSubtitleParser {
     private static final Pattern XML_TEXT_PATTERN = Pattern.compile(
             "<text[^>]*?start=\"([^\"]+)\"[^>]*?(?:dur=\"([^\"]+)\")?[^>]*?>([\\s\\S]*?)</text>",
             Pattern.CASE_INSENSITIVE);
+    /** TTML：<p begin="00:00:00.260" end="00:00:03.580" ...>text</p> */
+    private static final Pattern TTML_CUE_PATTERN = Pattern.compile(
+            "<p\\b[^>]*?begin=\"([^\"]+)\"[^>]*?end=\"([^\"]+)\"[^>]*?>([\\s\\S]*?)</p>",
+            Pattern.CASE_INSENSITIVE);
+    /** TTML：只有 begin（end 缺失时以下一段起点兜底） */
+    private static final Pattern TTML_CUE_BEGIN_ONLY_PATTERN = Pattern.compile(
+            "<p\\b[^>]*?begin=\"([^\"]+)\"[^>]*?>([\\s\\S]*?)</p>",
+            Pattern.CASE_INSENSITIVE);
 
     private DualSubtitleParser() {
     }
@@ -54,6 +62,14 @@ public final class DualSubtitleParser {
         // 2. YouTube XML 格式
         if (trimmed.contains("<text") || trimmed.contains("<transcript")) {
             final List<SubtitleItem> result = parseXml(trimmed);
+            if (!result.isEmpty()) {
+                return result;
+            }
+        }
+
+        // 2.5 TTML 格式（YouTube 新版 timedtext fmt=ttml，PBS 等节目常用）
+        if (trimmed.contains("<tt") || (trimmed.contains("<p ") && trimmed.contains("begin="))) {
+            final List<SubtitleItem> result = parseTtml(trimmed);
             if (!result.isEmpty()) {
                 return result;
             }
@@ -220,6 +236,115 @@ public final class DualSubtitleParser {
         return items;
     }
 
+    /**
+     * 解析 TTML 格式（YouTube timedtext {@code fmt=ttml}）
+     *
+     * <pre>
+     * &lt;p begin="00:00:00.260" end="00:00:03.580" style="s2"&gt;text&lt;/p&gt;
+     * </pre>
+     */
+    @NonNull
+    public static List<SubtitleItem> parseTtml(@NonNull final String ttmlStr) {
+        final List<SubtitleItem> items = new ArrayList<>();
+        try {
+            final Matcher matcher = TTML_CUE_PATTERN.matcher(ttmlStr);
+            while (matcher.find()) {
+                final long startMs = parseTtmlTimestamp(matcher.group(1));
+                final long endMs = parseTtmlTimestamp(matcher.group(2));
+                final String cleanText = cleanSubtitleText(decodeHtml(matcher.group(3)));
+                if (startMs >= 0 && !cleanText.isEmpty()) {
+                    items.add(new SubtitleItem(startMs, Math.max(startMs, endMs), cleanText));
+                }
+            }
+
+            // 兜底：部分 TTML 只给 begin，此时以下一段的 begin 作为本段 end
+            if (items.isEmpty()) {
+                final List<Long> starts = new ArrayList<>();
+                final List<String> texts = new ArrayList<>();
+                final Matcher beginOnly = TTML_CUE_BEGIN_ONLY_PATTERN.matcher(ttmlStr);
+                while (beginOnly.find()) {
+                    final long startMs = parseTtmlTimestamp(beginOnly.group(1));
+                    final String cleanText = cleanSubtitleText(decodeHtml(beginOnly.group(2)));
+                    if (startMs >= 0 && !cleanText.isEmpty()) {
+                        starts.add(startMs);
+                        texts.add(cleanText);
+                    }
+                }
+                for (int i = 0; i < texts.size(); i++) {
+                    final long startMs = starts.get(i);
+                    final long endMs = (i + 1 < texts.size() && starts.get(i + 1) > startMs)
+                            ? starts.get(i + 1) : startMs + 3000L;
+                    items.add(new SubtitleItem(startMs, endMs, texts.get(i)));
+                }
+            }
+        } catch (final Exception e) {
+            Log.e(TAG, "Failed to parse TTML subtitles", e);
+        }
+        Collections.sort(items);
+        return items;
+    }
+
+    /**
+     * TTML 时间戳：{@code 00:00:03.580} / {@code 1.5s} / {@code 250ms} / {@code 2m} / {@code 90f}
+     *
+     * @return 毫秒，无法识别返回 -1
+     */
+    private static long parseTtmlTimestamp(@Nullable final String raw) {
+        if (raw == null) {
+            return -1;
+        }
+        final String value = raw.trim();
+        if (value.isEmpty()) {
+            return -1;
+        }
+        try {
+            // 带单位：s / ms / m / h / f
+            if (!value.contains(":")) {
+                final Matcher m = Pattern.compile("([0-9.]+)\\s*(ms|s|m|h|f)?",
+                        Pattern.CASE_INSENSITIVE).matcher(value);
+                if (!m.matches()) {
+                    return -1;
+                }
+                final double num = Double.parseDouble(m.group(1));
+                final String unit = m.group(2) == null ? "s" : m.group(2).toLowerCase();
+                switch (unit) {
+                    case "ms":
+                        return Math.round(num);
+                    case "m":
+                        return Math.round(num * 60000);
+                    case "h":
+                        return Math.round(num * 3600000);
+                    case "f":
+                        return Math.round(num * 1000 / 30d); // 按 30fps 估算
+                    case "s":
+                    default:
+                        return Math.round(num * 1000);
+                }
+            }
+            // 冒号格式：hh:mm:ss.mmm / hh:mm:ss:ff / mm:ss.mmm
+            final String[] parts = value.split(":");
+            if (parts.length == 3) {
+                final long hours = Long.parseLong(parts[0]);
+                final long minutes = Long.parseLong(parts[1]);
+                final double seconds = Double.parseDouble(parts[2].replace(',', '.'));
+                return Math.round((hours * 3600 + minutes * 60) * 1000 + seconds * 1000);
+            } else if (parts.length == 4) {
+                final long hours = Long.parseLong(parts[0]);
+                final long minutes = Long.parseLong(parts[1]);
+                final long seconds = Long.parseLong(parts[2]);
+                final long frames = Long.parseLong(parts[3]);
+                return (hours * 3600 + minutes * 60 + seconds) * 1000
+                        + Math.round(frames * 1000 / 30d);
+            } else if (parts.length == 2) {
+                final long minutes = Long.parseLong(parts[0]);
+                final double seconds = Double.parseDouble(parts[1].replace(',', '.'));
+                return Math.round(minutes * 60 * 1000 + seconds * 1000);
+            }
+        } catch (final Exception ignored) {
+        }
+        return -1;
+    }
+
     private static long parseVttTimestamp(final String timestamp) {
         if (timestamp == null) {
             return 0;
@@ -253,7 +378,8 @@ public final class DualSubtitleParser {
         if (text == null) {
             return "";
         }
-        return text.replaceAll("<[^>]*>", "") // 去除内联HTML标签
+        return text.replaceAll("(?i)<br\\s*/?>", " ") // 换行标签转为空格，避免词粘连
+                .replaceAll("<[^>]*>", "") // 去除内联HTML标签
                 .replace("\n", " ")
                 .replaceAll("\\s+", " ")
                 .trim();
