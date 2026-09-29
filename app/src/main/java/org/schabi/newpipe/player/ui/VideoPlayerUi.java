@@ -42,7 +42,6 @@ import androidx.appcompat.content.res.AppCompatResources;
 import androidx.appcompat.view.ContextThemeWrapper;
 import androidx.appcompat.widget.AppCompatImageButton;
 import androidx.appcompat.widget.PopupMenu;
-import androidx.appcompat.app.AlertDialog;
 import android.widget.Toast;
 import org.schabi.newpipe.player.dualsubtitles.DualSubtitleConfig;
 import androidx.core.graphics.BitmapCompat;
@@ -135,6 +134,7 @@ public abstract class VideoPlayerUi extends PlayerUi implements SeekBar.OnSeekBa
     private PopupMenu audioTrackPopupMenu;
     protected PopupMenu playbackSpeedPopupMenu;
     private PopupMenu captionPopupMenu;
+    private List<String> lastAvailableLanguages;
 
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -1173,6 +1173,7 @@ public abstract class VideoPlayerUi extends PlayerUi implements SeekBar.OnSeekBa
     }
 
     private void buildCaptionMenu(@NonNull final List<String> availableLanguages) {
+        this.lastAvailableLanguages = availableLanguages;
         if (captionPopupMenu == null) {
             return;
         }
@@ -1220,9 +1221,9 @@ public abstract class VideoPlayerUi extends PlayerUi implements SeekBar.OnSeekBa
                 DualSubtitleConfig.getSecondaryLanguage(context));
         final MenuItem settingsItem = captionPopupMenu.getMenu().add(POPUP_MENU_ID_CAPTION,
                 availableLanguages.size() + 2, Menu.NONE,
-                "⚙️ 双语副语言设置 (" + secLangDisplay + ")");
+                "⚙️ 双语副语言: " + secLangDisplay);
         settingsItem.setOnMenuItemClickListener(menuItem -> {
-            showDualSubtitleLanguageDialog();
+            binding.captionTextView.post(this::showDualSubtitleLanguageMenu);
             return true;
         });
 
@@ -1277,41 +1278,59 @@ public abstract class VideoPlayerUi extends PlayerUi implements SeekBar.OnSeekBa
         }
     }
 
-    private void showDualSubtitleLanguageDialog() {
-        final String[] languages = {"zh-Hans", "zh-Hant", "ja", "en", "ko", "es", "fr", "de", "vi"};
+    private void showDualSubtitleLanguageMenu() {
+        if (binding == null || binding.captionTextView == null) {
+            return;
+        }
+
+        final String[] languages = {
+                "zh-Hans", "zh-Hant", "en", "ja", "ko", "es", "fr", "de", "ru", "vi"
+        };
         final String[] displayNames = {
                 "中文 (简体) - 默认",
                 "中文 (繁体)",
-                "日本語",
                 "English",
+                "日本語",
                 "한국어",
                 "Español",
                 "Français",
                 "Deutsch",
+                "Русский",
                 "Tiếng Việt"
         };
 
         final String currentLang = DualSubtitleConfig.getSecondaryLanguage(context);
-        int selectedIndex = 0;
-        for (int i = 0; i < languages.length; i++) {
-            if (languages[i].equalsIgnoreCase(currentLang)) {
-                selectedIndex = i;
-                break;
-            }
-        }
 
-        new AlertDialog.Builder(context)
-                .setTitle("选择双语副字幕目标语言")
-                .setSingleChoiceItems(displayNames, selectedIndex, (dialog, which) -> {
-                    final String chosen = languages[which];
-                    DualSubtitleConfig.setSecondaryLanguage(context, chosen);
-                    dialog.dismiss();
+        try {
+            controlsVisibilityHandler.removeCallbacksAndMessages(null);
+            animate(binding.playbackControlRoot, true, 0);
+
+            final ContextThemeWrapper themeWrapper = new ContextThemeWrapper(context,
+                    R.style.DarkPopupMenu);
+            final PopupMenu langMenu = new PopupMenu(themeWrapper, binding.captionTextView);
+            for (int i = 0; i < languages.length; i++) {
+                final String code = languages[i];
+                final String name = displayNames[i];
+                final String title = code.equalsIgnoreCase(currentLang) ? "✓ " + name : "   " + name;
+                final MenuItem item = langMenu.getMenu().add(POPUP_MENU_ID_CAPTION, i, Menu.NONE, title);
+                item.setOnMenuItemClickListener(mi -> {
+                    DualSubtitleConfig.setSecondaryLanguage(context, code);
                     Toast.makeText(context,
-                            "已设置副语言: " + displayNames[which] + "\n重新加载视频即可生效新双语字幕",
-                            Toast.LENGTH_LONG).show();
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
+                            "已设置副语言: " + name + "\n切换字幕或重载视频即可生效",
+                            Toast.LENGTH_SHORT).show();
+                    if (lastAvailableLanguages != null) {
+                        buildCaptionMenu(lastAvailableLanguages);
+                    }
+                    return true;
+                });
+            }
+
+            langMenu.setOnDismissListener(this);
+            langMenu.show();
+            isSomePopupMenuVisible = true;
+        } catch (final Exception e) {
+            Log.e(TAG, "Failed to show dual subtitle language menu", e);
+        }
     }
 
     protected abstract void onPlaybackSpeedClicked();
