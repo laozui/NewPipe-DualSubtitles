@@ -96,15 +96,16 @@ public final class DualSubtitleSynthesizer {
             Log.d(TAG, "Fetching primary subtitle from: " + primaryUrl);
             final String primaryRaw = fetchString(client, primaryUrl);
             if (primaryRaw == null || primaryRaw.isEmpty()) {
-                Log.w(TAG, "Primary subtitle content is empty for video: " + videoId);
-                return null;
+                // 🌟 常规字幕轨下载失败（429 / PO Token 限制等）→ 回退到交互式逐字稿
+                Log.w(TAG, "Primary subtitle empty, falling back to transcript for: " + videoId);
+                return buildDualSubtitleFileFromTranscript(context, videoId, targetLangCode);
             }
 
             // 解析为主字幕结构体
             List<SubtitleItem> primaryItems = DualSubtitleParser.parse(primaryRaw);
             if (primaryItems.isEmpty()) {
-                Log.w(TAG, "Parsed primary subtitle items is empty");
-                return null;
+                Log.w(TAG, "Parsed primary subtitle items is empty, falling back to transcript");
+                return buildDualSubtitleFileFromTranscript(context, videoId, targetLangCode);
             }
 
             // 若开启上下文合并且主字幕是单句碎词，执行上下文缝合对齐 (Stitching)
