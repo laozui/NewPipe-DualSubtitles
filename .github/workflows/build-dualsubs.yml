@@ -1,0 +1,42 @@
+name: Build DualSubtitles NewPipe APK
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Sign APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Grant Execute Permission for Gradlew
+        run: chmod +x gradlew
+
+      - name: Build APK (assembleContinuous)
+        run: ./gradlew assembleContinuous --stacktrace -DskipFormatKtlint
+
+      - name: Prepare Output Artifact
+        run: |
+          mkdir -p dist
+          find app/build/outputs/apk -name "*.apk" -exec cp {} dist/NewPipe-DualSubtitles.apk \;
+          ls -lh dist/
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NewPipe-DualSubtitles-APK
+          path: dist/*.apk
