@@ -141,21 +141,23 @@ public class VideoPlaybackResolver implements PlaybackResolver {
 
         // Create subtitle sources
         final List<SubtitlesStream> subtitlesStreams = info.getSubtitles();
-        if (subtitlesStreams != null) {
-            // Torrent and non URL subtitles are not supported by ExoPlayer
-            final List<SubtitlesStream> nonTorrentAndUrlStreams = getUrlAndNonTorrentStreams(
-                    subtitlesStreams);
+        // Torrent and non URL subtitles are not supported by ExoPlayer
+        final List<SubtitlesStream> nonTorrentAndUrlStreams = subtitlesStreams == null
+                ? new ArrayList<>() : getUrlAndNonTorrentStreams(subtitlesStreams);
 
-            // 🌟 注入 DualSubtitles 双语字幕虚拟轨 (排在所有字幕首位)
-            try {
-                final MediaSource dualSource = buildDualSubtitlesSource(info, nonTorrentAndUrlStreams);
-                if (dualSource != null) {
-                    mediaSources.add(dualSource);
-                }
-            } catch (final Exception e) {
-                Log.e(TAG, "Failed to build dual subtitles source", e);
+        // 🌟 注入 DualSubtitles 双语字幕虚拟轨 (排在所有字幕首位)
+        // 注意：即使完全没有字幕轨（如 PBS 仅提供交互式逐字稿的视频），
+        // 也要尝试逐字稿通道，因此这里必须独立于 subtitlesStreams 判断之外
+        try {
+            final MediaSource dualSource = buildDualSubtitlesSource(info, nonTorrentAndUrlStreams);
+            if (dualSource != null) {
+                mediaSources.add(dualSource);
             }
+        } catch (final Exception e) {
+            Log.e(TAG, "Failed to build dual subtitles source", e);
+        }
 
+        if (subtitlesStreams != null) {
             for (final SubtitlesStream subtitle : nonTorrentAndUrlStreams) {
                 final MediaFormat mediaFormat = subtitle.getFormat();
                 if (mediaFormat != null) {
@@ -234,8 +236,10 @@ public class VideoPlaybackResolver implements PlaybackResolver {
         }
 
         if (primarySub == null) {
-            Log.w(TAG, "No subtitle stream found for video: " + info.getId());
-            return null;
+            // 🌟 没有常规 CC 字幕轨：走交互式逐字稿通道（PBS 等节目常见）
+            Log.i(TAG, "No caption track available, trying interactive transcript for: "
+                    + info.getId());
+            return buildTranscriptDualSubtitlesSource(info, targetLang);
         }
 
         // 2. 检查是否有原生的副语言字幕（例如创作者上传的中文字幕）
@@ -269,13 +273,40 @@ public class VideoPlaybackResolver implements PlaybackResolver {
                 + PlayerHelper.captionLanguageOf(context, primarySub)
                 + " + " + DualSubtitleConfig.getLanguageDisplayName(targetLang);
 
+        return buildDualSubtitleMediaSource(dualVttFile, targetLang, dualLanguageTag);
+    }
+
+    /**
+     * 🌟 逐字稿通道：为没有 CC 字幕轨、仅有交互式逐字稿的视频构建双语字幕轨
+     */
+    @Nullable
+    private MediaSource buildTranscriptDualSubtitlesSource(
+            @NonNull final StreamInfo info,
+            @NonNull final String targetLang) {
+        final File dualVttFile = DualSubtitleSynthesizer.buildDualSubtitleFileFromTranscript(
+                context, info.getId(), targetLang);
+        if (dualVttFile == null || !dualVttFile.exists()) {
+            Log.w(TAG, "Transcript dual subtitle unavailable for: " + info.getId());
+            return null;
+        }
+
+        final String dualLanguageTag = "🌟 [双语] 逐字稿 + "
+                + DualSubtitleConfig.getLanguageDisplayName(targetLang);
+        return buildDualSubtitleMediaSource(dualVttFile, targetLang, dualLanguageTag);
+    }
+
+    @NonNull
+    private MediaSource buildDualSubtitleMediaSource(
+            @NonNull final File vttFile,
+            @NonNull final String targetLang,
+            @NonNull final String label) {
         final MediaItem.SubtitleConfiguration dualTextMediaItem =
-                new MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(dualVttFile))
+                new MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(vttFile))
                         .setId("dualsub_" + targetLang)
                         .setMimeType(MimeTypes.TEXT_VTT)
                         .setRoleFlags(C.ROLE_FLAG_CAPTION)
-                        .setLanguage(dualLanguageTag)
-                        .setLabel(dualLanguageTag)
+                        .setLanguage(label)
+                        .setLabel(label)
                         .build();
 
         return dataSource.getSingleSampleMediaSourceFactory()

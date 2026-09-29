@@ -176,6 +176,91 @@ public final class DualSubtitleSynthesizer {
     }
 
     /**
+     * 🌟 逐字稿 (Transcript) 通道：面向 PBS 等无 CC 字幕轨、仅有交互式逐字稿的视频
+     *
+     * <p>不再依赖 timedtext，而是通过 {@link YouTubeTranscriptFetcher} 拉取逐字稿段落作为主字幕，
+     * 再用 Google 翻译生成副语言，最后合成双语 WebVTT。</p>
+     *
+     * @param context        上下文
+     * @param videoId        视频 ID
+     * @param targetLangCode 目标副语言代号（如 zh-Hans）
+     * @return 合成后的本地 WebVTT 文件，失败返回 null
+     */
+    @Nullable
+    public static File buildDualSubtitleFileFromTranscript(
+            @NonNull final Context context,
+            @NonNull final String videoId,
+            @NonNull final String targetLangCode) {
+
+        final File cacheDir = new File(context.getCacheDir(), "dualsub_cache");
+        if (!cacheDir.exists()) {
+            //noinspection ResultOfMethodCallIgnored
+            cacheDir.mkdirs();
+        }
+
+        final String fileName = "dual_" + sanitizeFileName(videoId)
+                + "_tr_" + sanitizeFileName(targetLangCode) + ".vtt";
+        final File outputFile = new File(cacheDir, fileName);
+
+        if (outputFile.exists() && outputFile.length() > 100) {
+            Log.d(TAG, "Reusing cached transcript dual subtitle: " + outputFile.getAbsolutePath());
+            return outputFile;
+        }
+
+        try {
+            final OkHttpClient client = DownloaderImpl.getInstance().getClient();
+
+            // 1. 抓取逐字稿作为主字幕
+            final List<SubtitleItem> primaryItems =
+                    YouTubeTranscriptFetcher.fetchTranscript(client, videoId);
+            if (primaryItems.isEmpty()) {
+                Log.w(TAG, "Transcript unavailable for video: " + videoId);
+                return null;
+            }
+
+            // 2. 逐字稿段落普遍较长，采用较小的翻译批次避免 URL 过长
+            Log.i(TAG, "Translating " + primaryItems.size()
+                    + " transcript segments to " + targetLangCode);
+            final List<SubtitleItem> secondaryItems =
+                    translateViaGoogle(client, primaryItems, targetLangCode, 10);
+            if (secondaryItems.isEmpty()) {
+                Log.w(TAG, "Transcript translation failed for video: " + videoId);
+                return null;
+            }
+
+            // 3. 对齐合并 + 生成 WebVTT
+            final List<DualSubtitleAligner.MergedSubtitleItem> mergedItems =
+                    DualSubtitleAligner.alignDualSubtitles(primaryItems, secondaryItems);
+            if (mergedItems.isEmpty()) {
+                return null;
+            }
+
+            final String vttContent = generateWebVttString(
+                    mergedItems,
+                    DualSubtitleConfig.getPrimaryColor(context),
+                    DualSubtitleConfig.getSecondaryColor(context));
+
+            try (FileOutputStream fos = new FileOutputStream(outputFile);
+                 OutputStreamWriter writer = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
+                writer.write(vttContent);
+                writer.flush();
+            }
+
+            Log.i(TAG, "Transcript dual subtitle generated: " + outputFile.length()
+                    + " bytes, items=" + mergedItems.size());
+            return outputFile;
+
+        } catch (final Exception e) {
+            Log.e(TAG, "Error while synthesizing transcript dual subtitles", e);
+            if (outputFile.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                outputFile.delete();
+            }
+            return null;
+        }
+    }
+
+    /**
      * 将主字幕 YouTube timedtext 链接注入目标语言翻译参数 &tlang=
      */
     @NonNull
@@ -204,12 +289,24 @@ public final class DualSubtitleSynthesizer {
             @NonNull final OkHttpClient client,
             @NonNull final List<SubtitleItem> sourceItems,
             @NonNull final String targetLangCode) {
+        return translateViaGoogle(client, sourceItems, targetLangCode, 25);
+    }
+
+    /**
+     * 使用 Google 翻译公开接口对字幕条目进行分批并发翻译
+     *
+     * @param batchSize 每批合并的行数（逐字稿文本较长时应调小）
+     */
+    @NonNull
+    private static List<SubtitleItem> translateViaGoogle(
+            @NonNull final OkHttpClient client,
+            @NonNull final List<SubtitleItem> sourceItems,
+            @NonNull final String targetLangCode,
+            final int batchSize) {
 
         final String googleLang = GOOGLE_LANG_MAP.getOrDefault(targetLangCode, targetLangCode);
         final List<SubtitleItem> translatedList = new ArrayList<>(sourceItems.size());
 
-        // 分批批次大小，每批合并 25 行
-        final int batchSize = 25;
         for (int i = 0; i < sourceItems.size(); i += batchSize) {
             final int end = Math.min(i + batchSize, sourceItems.size());
             final List<SubtitleItem> batch = sourceItems.subList(i, end);

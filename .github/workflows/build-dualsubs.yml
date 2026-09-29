@@ -32,6 +32,8 @@ jobs:
       - name: Prepare Output Artifact
         run: |
           mkdir -p dist
+          VER=$(grep NEWPIPE_VERSION_NAME buildSrc/src/main/kotlin/ProjectConfig.kt | sed 's/.*"\(.*\)".*/\1/')
+          find app/build/outputs/apk -name "*.apk" -exec cp {} "dist/NewPipe-DualSubtitles-v${VER}.apk" \;
           find app/build/outputs/apk -name "*.apk" -exec cp {} dist/NewPipe-DualSubtitles.apk \;
           ls -lh dist/
 
