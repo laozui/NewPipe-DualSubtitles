@@ -56,6 +56,18 @@ configure<ApplicationExtension> {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        getByName("debug") {
+            val ksFile = rootProject.file("keystore/newpipe.jks")
+            if (ksFile.exists()) {
+                storeFile = ksFile
+                storePassword = "androiddebugkey"
+                keyAlias = "androiddebugkey"
+                keyPassword = "androiddebugkey"
+            }
+        }
+    }
+
     buildTypes {
         debug {
             isDebuggable = true

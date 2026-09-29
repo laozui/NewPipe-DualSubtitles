@@ -1191,37 +1191,64 @@ public abstract class VideoPlayerUi extends PlayerUi implements SeekBar.OnSeekBa
                         .buildUponParameters().setRendererDisabled(textRendererIndex, true));
             }
             player.getPrefs().edit()
-                    .remove(context.getString(R.string.caption_user_set_key)).apply();
+                    .putString(context.getString(R.string.caption_user_set_key), "OFF")
+                    .apply();
             return true;
         });
 
-        // Add all available captions
+        // 优先添加双语字幕项（若存在）
+        int itemIndex = 1;
         for (int i = 0; i < availableLanguages.size(); i++) {
             final String captionLanguage = availableLanguages.get(i);
-            final MenuItem captionItem = captionPopupMenu.getMenu().add(POPUP_MENU_ID_CAPTION,
-                    i + 1, Menu.NONE, captionLanguage);
-            captionItem.setOnMenuItemClickListener(menuItem -> {
-                final int textRendererIndex = player.getCaptionRendererIndex();
-                if (textRendererIndex != RENDERER_UNAVAILABLE) {
-                    player.getTrackSelector().setParameters(player.getTrackSelector()
-                            .buildUponParameters()
-                            .setPreferredTextLanguages(captionLanguage,
-                                    PlayerHelper.captionLanguageStemOf(captionLanguage))
-                            .setPreferredTextRoleFlags(C.ROLE_FLAG_CAPTION)
-                            .setRendererDisabled(textRendererIndex, false));
-                    player.getPrefs().edit().putString(context.getString(
-                            R.string.caption_user_set_key), captionLanguage).apply();
-                }
-                return true;
-            });
+            if (captionLanguage != null && captionLanguage.contains("[双语]")) {
+                final MenuItem captionItem = captionPopupMenu.getMenu().add(POPUP_MENU_ID_CAPTION,
+                        itemIndex++, Menu.NONE, captionLanguage);
+                captionItem.setOnMenuItemClickListener(menuItem -> {
+                    final int textRendererIndex = player.getCaptionRendererIndex();
+                    if (textRendererIndex != RENDERER_UNAVAILABLE) {
+                        player.getTrackSelector().setParameters(player.getTrackSelector()
+                                .buildUponParameters()
+                                .setPreferredTextLanguages(captionLanguage,
+                                        PlayerHelper.captionLanguageStemOf(captionLanguage))
+                                .setPreferredTextRoleFlags(C.ROLE_FLAG_CAPTION)
+                                .setRendererDisabled(textRendererIndex, false));
+                        player.getPrefs().edit().putString(context.getString(
+                                R.string.caption_user_set_key), captionLanguage).apply();
+                    }
+                    return true;
+                });
+            }
+        }
+
+        // 紧接着添加其他单语原生字幕项
+        for (int i = 0; i < availableLanguages.size(); i++) {
+            final String captionLanguage = availableLanguages.get(i);
+            if (captionLanguage == null || !captionLanguage.contains("[双语]")) {
+                final MenuItem captionItem = captionPopupMenu.getMenu().add(POPUP_MENU_ID_CAPTION,
+                        itemIndex++, Menu.NONE, captionLanguage);
+                captionItem.setOnMenuItemClickListener(menuItem -> {
+                    final int textRendererIndex = player.getCaptionRendererIndex();
+                    if (textRendererIndex != RENDERER_UNAVAILABLE) {
+                        player.getTrackSelector().setParameters(player.getTrackSelector()
+                                .buildUponParameters()
+                                .setPreferredTextLanguages(captionLanguage,
+                                        PlayerHelper.captionLanguageStemOf(captionLanguage))
+                                .setPreferredTextRoleFlags(C.ROLE_FLAG_CAPTION)
+                                .setRendererDisabled(textRendererIndex, false));
+                        player.getPrefs().edit().putString(context.getString(
+                                R.string.caption_user_set_key), captionLanguage).apply();
+                    }
+                    return true;
+                });
+            }
         }
 
         // 🌟 增加双语字幕目标副语言设置快捷项
         final String secLangDisplay = DualSubtitleConfig.getLanguageDisplayName(
                 DualSubtitleConfig.getSecondaryLanguage(context));
         final MenuItem settingsItem = captionPopupMenu.getMenu().add(POPUP_MENU_ID_CAPTION,
-                availableLanguages.size() + 2, Menu.NONE,
-                "⚙️ 双语副语言: " + secLangDisplay);
+                itemIndex++, Menu.NONE,
+                "⚙️ 更改双语副语言: " + secLangDisplay);
         settingsItem.setOnMenuItemClickListener(menuItem -> {
             binding.captionTextView.post(this::showDualSubtitleLanguageMenu);
             return true;
@@ -1235,38 +1262,46 @@ public abstract class VideoPlayerUi extends PlayerUi implements SeekBar.OnSeekBa
             return;
         }
 
-        // If user prefers to show no caption, then disable the renderer.
-        // Otherwise, DefaultTrackSelector may automatically find an available caption
-        // and display that.
         final String userPreferredLanguage =
                 player.getPrefs().getString(context.getString(R.string.caption_user_set_key), null);
-        if (userPreferredLanguage == null) {
-            // 🌟 若用户未曾手动禁用字幕，且开启了双语字幕功能，自动优先启用双语字幕
-            if (DualSubtitleConfig.isDualSubsEnabled(context)) {
-                String dualTrack = null;
-                for (final String lang : availableLanguages) {
-                    if (lang != null && lang.contains("[双语]")) {
-                        dualTrack = lang;
-                        break;
-                    }
-                }
-                if (dualTrack != null) {
-                    player.getTrackSelector().setParameters(player.getTrackSelector().buildUponParameters()
-                            .setPreferredTextLanguages(dualTrack,
-                                    PlayerHelper.captionLanguageStemOf(dualTrack))
-                            .setPreferredTextRoleFlags(C.ROLE_FLAG_CAPTION)
-                            .setRendererDisabled(textRendererIndex, false));
-                    return;
-                }
-            }
 
+        // 查找可用的双语轨
+        String dualTrack = null;
+        for (final String lang : availableLanguages) {
+            if (lang != null && lang.contains("[双语]")) {
+                dualTrack = lang;
+                break;
+            }
+        }
+
+        // 若用户明确关闭了字幕 ("OFF")，则禁用渲染器
+        if ("OFF".equals(userPreferredLanguage)) {
             player.getTrackSelector().setParameters(player.getTrackSelector().buildUponParameters()
                     .setRendererDisabled(textRendererIndex, true));
             return;
         }
 
-        // Only set preferred language if it does not match the user preference,
-        // otherwise there might be an infinite cycle at onTextTracksChanged.
+        // 🌟 若存在双语字幕且满足自动激活条件（默认未关闭字幕、或选择了双语），自动启用双语字幕
+        if (dualTrack != null && (userPreferredLanguage == null
+                || "DUAL_SUB_AUTO".equals(userPreferredLanguage)
+                || userPreferredLanguage.contains("[双语]"))) {
+            player.getTrackSelector().setParameters(player.getTrackSelector().buildUponParameters()
+                    .setPreferredTextLanguages(dualTrack,
+                            PlayerHelper.captionLanguageStemOf(dualTrack))
+                    .setPreferredTextRoleFlags(C.ROLE_FLAG_CAPTION)
+                    .setRendererDisabled(textRendererIndex, false));
+            player.getPrefs().edit().putString(context.getString(
+                    R.string.caption_user_set_key), dualTrack).apply();
+            return;
+        }
+
+        if (userPreferredLanguage == null) {
+            player.getTrackSelector().setParameters(player.getTrackSelector().buildUponParameters()
+                    .setRendererDisabled(textRendererIndex, true));
+            return;
+        }
+
+        // 否则按用户之前偏好的语言应用
         final List<String> selectedPreferredLanguages =
                 player.getTrackSelector().getParameters().preferredTextLanguages;
         if (!selectedPreferredLanguages.contains(userPreferredLanguage)) {
@@ -1315,12 +1350,12 @@ public abstract class VideoPlayerUi extends PlayerUi implements SeekBar.OnSeekBa
                 final MenuItem item = langMenu.getMenu().add(POPUP_MENU_ID_CAPTION, i, Menu.NONE, title);
                 item.setOnMenuItemClickListener(mi -> {
                     DualSubtitleConfig.setSecondaryLanguage(context, code);
+                    player.getPrefs().edit().putString(context.getString(
+                            R.string.caption_user_set_key), "DUAL_SUB_AUTO").apply();
                     Toast.makeText(context,
-                            "已设置副语言: " + name + "\n切换字幕或重载视频即可生效",
+                            "🌟 已设置双语副语言: " + name + "\n正在为您实时重载双语字幕...",
                             Toast.LENGTH_SHORT).show();
-                    if (lastAvailableLanguages != null) {
-                        buildCaptionMenu(lastAvailableLanguages);
-                    }
+                    player.reloadPlaybackForDualSubtitles();
                     return true;
                 });
             }
@@ -1492,7 +1527,12 @@ public abstract class VideoPlayerUi extends PlayerUi implements SeekBar.OnSeekBa
                 player.getCaptionRendererIndex()) || selectedTracks.isEmpty()) {
             binding.captionTextView.setText(R.string.caption_none);
         } else {
-            binding.captionTextView.setText(selectedTracks.get().language);
+            final String selLang = selectedTracks.get().language;
+            if (selLang != null && selLang.contains("[双语]")) {
+                binding.captionTextView.setText("🌟 双语");
+            } else {
+                binding.captionTextView.setText(selLang);
+            }
         }
         binding.captionTextView.setVisibility(
                 availableLanguages.isEmpty() ? View.GONE : View.VISIBLE);

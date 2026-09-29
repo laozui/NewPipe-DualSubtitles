@@ -2372,6 +2372,15 @@ public final class Player implements PlaybackListener, Listener {
         reloadPlayQueueManager();
     }
 
+    /**
+     * 🌟 为双语字幕实时切换副语言提供平滑热重载能力 (保留播放进度与状态)
+     */
+    public void reloadPlaybackForDualSubtitles() {
+        saveStreamProgressState();
+        setRecovery();
+        reloadPlayQueueManager();
+    }
+
 
     @NonNull
     public Context getContext() {

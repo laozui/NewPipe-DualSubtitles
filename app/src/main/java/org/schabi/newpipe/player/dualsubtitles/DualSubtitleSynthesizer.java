@@ -6,25 +6,47 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import org.json.JSONArray;
 import org.schabi.newpipe.DownloaderImpl;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
 /**
- * 双语字幕合成与本地 WebVTT 生成引擎
+ * 双语字幕合成与本地 WebVTT 生成引擎 (DualSubtitles Pro 引擎)
+ * 支持原生副字幕提取、YouTube Timedtext 转译、以及 Google 极速翻译兜底
  */
 public final class DualSubtitleSynthesizer {
     private static final String TAG = "DualSubtitleSynth";
+
+    private static final Map<String, String> GOOGLE_LANG_MAP = new HashMap<>();
+    static {
+        GOOGLE_LANG_MAP.put("zh-Hans", "zh-CN");
+        GOOGLE_LANG_MAP.put("zh-Hant", "zh-TW");
+        GOOGLE_LANG_MAP.put("zh", "zh-CN");
+        GOOGLE_LANG_MAP.put("en", "en");
+        GOOGLE_LANG_MAP.put("ja", "ja");
+        GOOGLE_LANG_MAP.put("ko", "ko");
+        GOOGLE_LANG_MAP.put("es", "es");
+        GOOGLE_LANG_MAP.put("fr", "fr");
+        GOOGLE_LANG_MAP.put("de", "de");
+        GOOGLE_LANG_MAP.put("ru", "ru");
+        GOOGLE_LANG_MAP.put("vi", "vi");
+    }
 
     private DualSubtitleSynthesizer() {
     }
@@ -36,7 +58,7 @@ public final class DualSubtitleSynthesizer {
      * @param videoId          视频 ID (如 YouTube videoId)
      * @param primaryUrl       主字幕 URL
      * @param primaryLangCode  主语言代号 (如 en)
-     * @param secondaryUrl     现成副字幕 URL (若无现成中文，可传 null，将自动通过 &tlang= 向 YouTube 申请)
+     * @param secondaryUrl     现成副字幕 URL (若无现成中文，可传 null，将自动通过 &tlang= 或 Google 翻译申请)
      * @param targetLangCode   目标副语言代号 (如 zh-Hans)
      * @return 合成后的本地 WebVTT 文件，若失败返回 null
      */
@@ -62,7 +84,8 @@ public final class DualSubtitleSynthesizer {
 
         // 如果本地已存在且大小大于 100 字节，直接复用秒开
         if (outputFile.exists() && outputFile.length() > 100) {
-            Log.d(TAG, "Reusing cached dual subtitle: " + outputFile.getAbsolutePath());
+            Log.d(TAG, "Reusing cached dual subtitle: " + outputFile.getAbsolutePath()
+                    + " (" + outputFile.length() + " bytes)");
             return outputFile;
         }
 
@@ -73,53 +96,73 @@ public final class DualSubtitleSynthesizer {
             Log.d(TAG, "Fetching primary subtitle from: " + primaryUrl);
             final String primaryRaw = fetchString(client, primaryUrl);
             if (primaryRaw == null || primaryRaw.isEmpty()) {
-                Log.w(TAG, "Primary subtitle content is empty");
+                Log.w(TAG, "Primary subtitle content is empty for video: " + videoId);
                 return null;
             }
 
-            // 2. 准备副字幕下载链接
-            final String finalSecUrl;
-            if (secondaryUrl != null && !secondaryUrl.isEmpty()) {
-                finalSecUrl = secondaryUrl;
-            } else {
-                // 激活 YouTube Timedtext 原生机器翻译能力
-                finalSecUrl = buildYoutubeTranslatedUrl(primaryUrl, targetLangCode);
-            }
-
-            Log.d(TAG, "Fetching secondary subtitle from: " + finalSecUrl);
-            final String secondaryRaw = fetchString(client, finalSecUrl);
-
-            // 3. 解析为结构化模型
+            // 解析为主字幕结构体
             List<SubtitleItem> primaryItems = DualSubtitleParser.parse(primaryRaw);
-            final List<SubtitleItem> secondaryItems = DualSubtitleParser.parse(secondaryRaw);
-
             if (primaryItems.isEmpty()) {
                 Log.w(TAG, "Parsed primary subtitle items is empty");
                 return null;
             }
 
-            // 4. 若开启上下文合并且主字幕是单句碎词，执行 Stitching
+            // 若开启上下文合并且主字幕是单句碎词，执行上下文缝合对齐 (Stitching)
             if (DualSubtitleConfig.isStitchingEnabled(context)) {
                 primaryItems = DualSubtitleAligner.stitchTimeline(primaryItems);
             }
 
-            // 5. 对齐合并
+            // 2. 准备副字幕
+            List<SubtitleItem> secondaryItems = Collections.emptyList();
+
+            // 2.1 若有现成副字幕 URL，优先下载
+            if (secondaryUrl != null && !secondaryUrl.isEmpty()) {
+                Log.d(TAG, "Fetching existing secondary subtitle from: " + secondaryUrl);
+                final String secondaryRaw = fetchString(client, secondaryUrl);
+                if (secondaryRaw != null && !secondaryRaw.isEmpty()) {
+                    secondaryItems = DualSubtitleParser.parse(secondaryRaw);
+                }
+            }
+
+            // 2.2 若无现成副字幕或下载失败，尝试通过 YouTube 原生 timedtext &tlang=
+            if (secondaryItems.isEmpty()) {
+                final String ytTransUrl = buildYoutubeTranslatedUrl(primaryUrl, targetLangCode);
+                Log.d(TAG, "Attempting YouTube native timedtext translation: " + ytTransUrl);
+                final String ytTransRaw = fetchString(client, ytTransUrl);
+                if (ytTransRaw != null && !ytTransRaw.isEmpty()) {
+                    secondaryItems = DualSubtitleParser.parse(ytTransRaw);
+                }
+            }
+
+            // 2.3 🌟 核心保底策略：若依然无副字幕（YouTube 429/无翻译），调用 Google 极速翻译引擎
+            if (secondaryItems.isEmpty()) {
+                Log.i(TAG, "Activating Google Translate fallback engine for " + primaryItems.size() + " items");
+                secondaryItems = translateViaGoogle(client, primaryItems, targetLangCode);
+            }
+
+            // 3. 对齐合并双语字幕
             final List<DualSubtitleAligner.MergedSubtitleItem> mergedItems =
                     DualSubtitleAligner.alignDualSubtitles(primaryItems, secondaryItems);
 
-            // 6. 生成标准 WebVTT
+            if (mergedItems.isEmpty()) {
+                Log.w(TAG, "Merged subtitle items is empty");
+                return null;
+            }
+
+            // 4. 生成标准高保真 WebVTT
             final String primaryColor = DualSubtitleConfig.getPrimaryColor(context);
             final String secondaryColor = DualSubtitleConfig.getSecondaryColor(context);
             final String vttContent = generateWebVttString(mergedItems, primaryColor, secondaryColor);
 
-            // 7. 写入缓存文件
+            // 5. 写入缓存文件
             try (FileOutputStream fos = new FileOutputStream(outputFile);
                  OutputStreamWriter writer = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
                 writer.write(vttContent);
                 writer.flush();
             }
 
-            Log.i(TAG, "Successfully generated dual subtitles WebVTT: " + outputFile.length() + " bytes");
+            Log.i(TAG, "Successfully generated dual subtitles WebVTT: " + outputFile.length()
+                    + " bytes, items=" + mergedItems.size());
             return outputFile;
 
         } catch (final Exception e) {
@@ -145,7 +188,6 @@ public final class DualSubtitleSynthesizer {
         final Uri uri = Uri.parse(originalUrl);
         final Uri.Builder builder = uri.buildUpon();
 
-        // 确保使用 WebVTT 或 json3 格式以获得最干净的时间轴
         builder.appendQueryParameter("tlang", targetLang);
         if (uri.getQueryParameter("fmt") == null) {
             builder.appendQueryParameter("fmt", "vtt");
@@ -154,11 +196,87 @@ public final class DualSubtitleSynthesizer {
         return builder.build().toString();
     }
 
+    /**
+     * 使用 Google 翻译公开接口对字幕条目进行分批并发翻译
+     */
+    @NonNull
+    private static List<SubtitleItem> translateViaGoogle(
+            @NonNull final OkHttpClient client,
+            @NonNull final List<SubtitleItem> sourceItems,
+            @NonNull final String targetLangCode) {
+
+        final String googleLang = GOOGLE_LANG_MAP.getOrDefault(targetLangCode, targetLangCode);
+        final List<SubtitleItem> translatedList = new ArrayList<>(sourceItems.size());
+
+        // 分批批次大小，每批合并 25 行
+        final int batchSize = 25;
+        for (int i = 0; i < sourceItems.size(); i += batchSize) {
+            final int end = Math.min(i + batchSize, sourceItems.size());
+            final List<SubtitleItem> batch = sourceItems.subList(i, end);
+
+            final StringBuilder batchText = new StringBuilder();
+            for (int j = 0; j < batch.size(); j++) {
+                if (j > 0) {
+                    batchText.append("\n");
+                }
+                // 单行内部的换行替换为空格，确保行数一一对应
+                batchText.append(batch.get(j).getText().replace("\n", " ").trim());
+            }
+
+            final List<String> translatedLines = translateBatch(client, batchText.toString(), googleLang);
+
+            for (int j = 0; j < batch.size(); j++) {
+                final SubtitleItem orig = batch.get(j);
+                final String transText = (j < translatedLines.size() && !translatedLines.get(j).isEmpty())
+                        ? translatedLines.get(j)
+                        : orig.getText();
+                translatedList.add(new SubtitleItem(orig.getStartMs(), orig.getEndMs(), transText));
+            }
+        }
+
+        return translatedList;
+    }
+
+    @NonNull
+    private static List<String> translateBatch(
+            @NonNull final OkHttpClient client,
+            @NonNull final String combinedText,
+            @NonNull final String targetLang) {
+
+        final List<String> lines = new ArrayList<>();
+        try {
+            final String encoded = URLEncoder.encode(combinedText, "UTF-8");
+            final String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl="
+                    + targetLang + "&dt=t&q=" + encoded;
+
+            final String respJson = fetchString(client, url);
+            if (respJson != null && respJson.startsWith("[")) {
+                final JSONArray rootArray = new JSONArray(respJson);
+                final JSONArray sentencesArray = rootArray.optJSONArray(0);
+                if (sentencesArray != null) {
+                    final StringBuilder fullTrans = new StringBuilder();
+                    for (int k = 0; k < sentencesArray.length(); k++) {
+                        final JSONArray item = sentencesArray.optJSONArray(k);
+                        if (item != null && item.length() > 0) {
+                            fullTrans.append(item.optString(0, ""));
+                        }
+                    }
+                    final String[] splitLines = fullTrans.toString().split("\n");
+                    Collections.addAll(lines, splitLines);
+                }
+            }
+        } catch (final Exception e) {
+            Log.w(TAG, "Google Translate batch failed: " + e.getMessage());
+        }
+        return lines;
+    }
+
     @Nullable
     private static String fetchString(@NonNull final OkHttpClient client, @NonNull final String url) {
         final Request request = new Request.Builder()
                 .url(url)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .header("Referer", "https://www.youtube.com/")
                 .build();
         try (Response response = client.newCall(request).execute()) {
             if (response.isSuccessful() && response.body() != null) {
@@ -167,7 +285,7 @@ public final class DualSubtitleSynthesizer {
                 Log.w(TAG, "Failed response code " + response.code() + " for " + url);
             }
         } catch (final IOException e) {
-            Log.e(TAG, "Network error fetching " + url, e);
+            Log.e(TAG, "Network error fetching " + url + ": " + e.getMessage());
         }
         return null;
     }
