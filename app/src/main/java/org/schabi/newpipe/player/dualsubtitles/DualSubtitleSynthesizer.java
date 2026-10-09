@@ -389,11 +389,18 @@ public final class DualSubtitleSynthesizer {
 
     @Nullable
     private static String fetchString(@NonNull final OkHttpClient client, @NonNull final String url) {
-        final Request request = new Request.Builder()
+        final Request.Builder builder = new Request.Builder()
                 .url(url)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                .header("Referer", "https://www.youtube.com/")
-                .build();
+                .header("Referer", "https://www.youtube.com/");
+        try {
+            final String cookies = DownloaderImpl.getInstance().getCookies(url);
+            if (cookies != null && !cookies.isEmpty()) {
+                builder.header("Cookie", cookies);
+            }
+        } catch (final Exception ignored) {
+        }
+        final Request request = builder.build();
         try (Response response = client.newCall(request).execute()) {
             if (response.isSuccessful() && response.body() != null) {
                 return response.body().string();

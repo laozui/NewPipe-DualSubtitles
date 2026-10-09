@@ -32,6 +32,8 @@ public final class DownloaderImpl extends Downloader {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0";
     public static final String YOUTUBE_RESTRICTED_MODE_COOKIE_KEY =
             "youtube_restricted_mode_key";
+    public static final String YOUTUBE_ACCOUNT_COOKIE_KEY =
+            "youtube_account_cookie_key";
     public static final String YOUTUBE_RESTRICTED_MODE_COOKIE = "PREF=f2=8000000";
     public static final String YOUTUBE_DOMAIN = "youtube.com";
 
@@ -70,12 +72,20 @@ public final class DownloaderImpl extends Downloader {
     }
 
     public String getCookies(final String url) {
-        final String youtubeCookie = url.contains(YOUTUBE_DOMAIN)
+        final boolean isYoutube = url.contains(YOUTUBE_DOMAIN)
+                || url.contains("googlevideo.com")
+                || url.contains("youtu.be");
+
+        final String youtubeRestrictedCookie = isYoutube
                 ? getCookie(YOUTUBE_RESTRICTED_MODE_COOKIE_KEY) : null;
+        final String youtubeAccountCookie = isYoutube
+                ? getCookie(YOUTUBE_ACCOUNT_COOKIE_KEY) : null;
+        final String recaptchaCookie = getCookie(ReCaptchaActivity.RECAPTCHA_COOKIES_KEY);
 
         // Recaptcha cookie is always added TODO: not sure if this is necessary
-        return Stream.of(youtubeCookie, getCookie(ReCaptchaActivity.RECAPTCHA_COOKIES_KEY))
+        return Stream.of(youtubeRestrictedCookie, youtubeAccountCookie, recaptchaCookie)
                 .filter(Objects::nonNull)
+                .filter(s -> !s.trim().isEmpty())
                 .flatMap(cookies -> Arrays.stream(cookies.split("; *")))
                 .distinct()
                 .collect(Collectors.joining("; "));
@@ -107,6 +117,23 @@ public final class DownloaderImpl extends Downloader {
                     YOUTUBE_RESTRICTED_MODE_COOKIE);
         } else {
             removeCookie(YOUTUBE_RESTRICTED_MODE_COOKIE_KEY);
+        }
+        InfoCache.getInstance().clearCache();
+    }
+
+    public void updateYoutubeAccountCookie(final Context context) {
+        final String accountCookieKey =
+                context.getString(R.string.youtube_account_cookie_key);
+        final String cookie = PreferenceManager.getDefaultSharedPreferences(context)
+                .getString(accountCookieKey, null);
+        updateYoutubeAccountCookie(cookie);
+    }
+
+    public void updateYoutubeAccountCookie(final String cookie) {
+        if (cookie != null && !cookie.trim().isEmpty()) {
+            setCookie(YOUTUBE_ACCOUNT_COOKIE_KEY, cookie.trim());
+        } else {
+            removeCookie(YOUTUBE_ACCOUNT_COOKIE_KEY);
         }
         InfoCache.getInstance().clearCache();
     }

@@ -78,13 +78,21 @@ public final class YouTubeTranscriptFetcher {
         final List<SubtitleItem> result = new ArrayList<>();
         try {
             final String watchUrl = WATCH_URL + videoId;
+            String cookieHeader = "CONSENT=YES+1; SOCS=CAI";
+            try {
+                final String accountCookie = DownloaderImpl.getInstance().getCookies(watchUrl);
+                if (accountCookie != null && !accountCookie.isEmpty()) {
+                    cookieHeader += "; " + accountCookie;
+                }
+            } catch (final Exception ignored) {
+            }
 
             // 1. 拉取 watch 页面，取出 visitorData 与 Innertube clientVersion
             final String html = getString(client, new Request.Builder()
                     .url(watchUrl)
                     .header("User-Agent", DESKTOP_UA)
                     .header("Accept-Language", "en-US,en;q=0.9")
-                    .header("Cookie", "CONSENT=YES+1; SOCS=CAI")
+                    .header("Cookie", cookieHeader)
                     .build());
             if (html == null || html.isEmpty()) {
                 Log.w(TAG, "Watch page empty for " + videoId);
@@ -128,7 +136,7 @@ public final class YouTubeTranscriptFetcher {
                     .header("X-Youtube-Client-Version", clientVersion)
                     .header("Origin", "https://www.youtube.com")
                     .header("Referer", watchUrl)
-                    .header("Cookie", "CONSENT=YES+1; SOCS=CAI")
+                    .header("Cookie", cookieHeader)
                     .post(RequestBody.create(body(payload),
                             MediaType.parse("application/json; charset=utf-8")))
                     .build());

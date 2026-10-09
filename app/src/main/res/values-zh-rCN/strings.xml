@@ -831,7 +831,7 @@
     <string name="player_http_403">播放时从服务器收到 HTTP 403 错误，可能因串流 URL 过期或 IP 封锁导致</string>
     <string name="player_http_invalid_status">播放时从服务器收到 HTTP %1$s 错误</string>
     <string name="youtube_player_http_403">播放时从服务器收到 HTTP 403 错误，可能因 IP 封锁或串流 URL 解密问题导致</string>
-    <string name="sign_in_confirm_not_bot_error">%1$s 拒绝提供数据， 要求登录确认请求方不是机器人。\n\n你的 IP 可能已经暂时被 %1$s 封禁，你可以等待一段时间或切换到不同 IP （比如开/关 VPN, 或者从 WiFi 连接切换到移动数据）。\n\n请见 <a href="%2$s">此 FAQ条目</a> 获取更多信息。</string>
+    <string name="sign_in_confirm_not_bot_error">%1$s 拒绝提供数据，要求登录确认请求方不是机器人。\n\n当前节点的机房 IP 触发了 YouTube 匿名反爬风控。\n\n【彻底解决方式】：请前往客户端主菜单【设置 &gt; 内容 &gt; YouTube 账号凭据 (Cookie)】粘贴你的 YouTube 账号 Cookie，请求将自动附带登录态，永久免除机器人验证！</string>
     <string name="unsupported_content_in_country">此内容对当前选中的内容地区不可用。\n\n要更改选择，请前往 “设置 &gt; 内容 &gt; 默认内容地区”。</string>
     <string name="kao_dialog_warning">2025 年 8 月，Google 宣布自 2026 年 9 月起，在已认证设备上安装所有安卓应用都需要开发者验证身份，包括在 Play 商店之外安装的应用。由于 NewPipe 开发者反对此要求，NewPipe 在此时间点后不会再在已认证设备上工作。</string>
     <string name="kao_dialog_more_info">详情</string>
@@ -853,4 +853,15 @@
     <string name="api23_requirement_dialog_title">NewPipe 正放弃对 Android 5 的支持</string>
     <string name="api23_requirement_dialog_message">NewPipe 依赖几个已经不支持 Android 5 和 5.1 的库文件。下个 NewPipe 版本因此会只在 Android 6 或更高版本上工作。阅读博客文章了解更多信息。</string>
     <string name="api23_requirement_dialog_blogpost">博客文章</string>
+
+    <!-- YouTube 账号 Cookie -->
+    <string name="youtube_cookie_title">YouTube 账号凭据 (Cookie)</string>
+    <string name="youtube_cookie_summary_empty">未配置。粘贴 Cookie 可解除 IP 封禁与“确认不是机器人”限制</string>
+    <string name="youtube_cookie_summary_set">已配置有效凭据。所有请求将自动注入登录态解除风控</string>
+    <string name="youtube_cookie_dialog_title">配置 YouTube 账号 Cookie</string>
+    <string name="youtube_cookie_dialog_message">从电脑或手机浏览器导出登录了 YouTube 账号的 Cookie 文本（例如包含 LOGIN_INFO、SAPISID、SID 等，支持整段直接粘贴），粘贴在此处。\n\n配置后，NewPipe 将以正常登录用户身份请求视频，彻底解决机房 VPS 节点被识别为机器人的风控拦截！</string>
+    <string name="youtube_cookie_paste_btn">粘贴</string>
+    <string name="youtube_cookie_clear_btn">清空</string>
+    <string name="toast_youtube_cookie_saved">已保存 YouTube 账号 Cookie，已即时生效！</string>
+    <string name="toast_youtube_cookie_cleared">已清空 YouTube 账号 Cookie</string>
 </resources>

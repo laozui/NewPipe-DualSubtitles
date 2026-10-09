@@ -903,4 +903,15 @@
     <string name="api23_requirement_dialog_title">NewPipe is dropping support for Android 5</string>
     <string name="api23_requirement_dialog_message">Unfortunately NewPipe depends on a few libraries that dropped support for Android 5.0 and 5.1. The next NewPipe release will therefore only work on devices with Android 6 or higher, sadly. Read more in the blogpost.</string>
     <string name="api23_requirement_dialog_blogpost">Blogpost</string>
+
+    <!-- YouTube Account Cookie -->
+    <string name="youtube_cookie_title">YouTube Account Cookie</string>
+    <string name="youtube_cookie_summary_empty">Not set. Paste YouTube cookie to bypass IP ban and \"Sign in to confirm you are not a bot\"</string>
+    <string name="youtube_cookie_summary_set">Configured. Injected automatically into YouTube requests to prevent bot detection</string>
+    <string name="youtube_cookie_dialog_title">Configure YouTube Account Cookie</string>
+    <string name="youtube_cookie_dialog_message">Export cookie from a logged-in YouTube browser session (e.g. containing LOGIN_INFO, SAPISID, SID, or the full cookie string) and paste it here.\n\nOnce configured, YouTube requests will carry your login state, permanently preventing \"confirm you are not a bot\" errors on VPS / datacenter IPs!</string>
+    <string name="youtube_cookie_paste_btn">Paste</string>
+    <string name="youtube_cookie_clear_btn">Clear</string>
+    <string name="toast_youtube_cookie_saved">YouTube account cookie saved and activated!</string>
+    <string name="toast_youtube_cookie_cleared">YouTube account cookie cleared</string>
 </resources>
